@@ -1,0 +1,164 @@
+library (sp)
+library (lattice)
+library(ggplot2)
+library (reshape2)
+library (readxl)
+library(tidyverse)
+library (scales)
+library (tibble)
+library(writexl)
+library (zoo)
+library(data.table)
+library (janitor)
+library(stargazer)
+library (openxlsx)
+expo<-read_xlsx ("submissions-export small ruminants meat_text_keys.xlsx",col_names = TRUE )
+data<-data.frame(expo,stringsAsFactors = FALSE, check.names = FALSE)
+data <- subset(data, Fictional != "Yes")
+##filter country
+data_filtrada <- data %>% filter(Country =='Denmark')%>%select(-c(1, 2, 8, 9, 10, 11))
+
+##get column name
+col_name <- names(data_filtrada)[116]
+## Move the column to after the first column
+data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+##add column and fill the species
+data_filtrada <- data_filtrada %>% add_column(species = "Small_ruminants_meat", .after = 3)
+##move total weight
+col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 127)
+data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+
+col_names_6_to_153 <- names(data_filtrada)[6:125]
+#Get the number of rows in the dataframe
+num_rows <- nrow(data_filtrada)
+
+# Append the column names as values below the existing values in column 4
+data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+## add colnames
+data_filtrada <- data_filtrada %>% add_column(`Mean value` = NA, .after = 5)
+data_filtrada <- data_filtrada %>% add_column(`Variance_range` = NA, .after = 6)
+data_filtrada <- data_filtrada %>% add_column(`Mode` = NA, .after = 7)
+data_filtrada <- data_filtrada %>% add_column(`Percentage` = NA, .after = 8)
+data_filtrada <- data_filtrada %>% add_column(`Cualitative Variation Index` = NA, .after = 9)
+data_filtrada <- data_filtrada %>% add_column(`Number of Answers` = NA, .after = 10)
+
+##mean variance 
+##removecol
+data_mean <- data_filtrada[, -c(1:11)]
+data_cuantitative <- c(2:5, 8:11,18,92,103,104)
+data_mean_subset <- data_mean[, data_cuantitative]
+data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+data_mean_subset <- as.data.frame(data_mean_subset)
+mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+
+data_filtrada[data_cuantitative, 6] <- mean_values  # Copy mean values to column 6
+data_filtrada[data_cuantitative, 7] <- variance_values  # Copy variance values to column 7
+data_filtrada[data_cuantitative, 11] <- num_observations 
+
+##mode,rank,observations
+data_cualitative <- c(1,6,7,12:17,19:91,93:102,105:110)
+# Custom function to calculate mode for a single column, excluding NA values
+calculate_mode <- function(x) {
+  x <- na.omit(x)  # Remove NA values
+  uniq_vals <- unique(x)
+  mode_value <- uniq_vals[which.max(tabulate(match(x, uniq_vals)))]
+  # Calculate the frequency of the mode
+  mode_frequency <- sum(x == mode_value)
+  # Calculate the percentage of the mode
+  mode_percentage <- (mode_frequency / length(x)) * 100
+  return(list(mode_value = mode_value, mode_percentage = mode_percentage))
+}
+# Custom function to calculate the Index of Qualitative Variation (IVC)
+calculate_ivc <- function(x) {
+  x <- na.omit(x)  # Remove NA values
+  N <- length(x)   # Total number of non-NA observations
+  freq_table <- table(x)  # Frequency of each category
+  freq_proportions <- freq_table / N  # Proportions of each category
+  ivc <- 1 - sum(freq_proportions^2)  # Calculate IVC
+  return(ivc)
+}
+# Subset the data frame to select columns 5 to 58
+data_subset <- data_mean[, data_cualitative]
+# Initialize a list to store the results for each column
+results <- list()
+# Loop through each column from 5 to 58
+for (i in 1:ncol(data_subset)) {
+  column_data <- data_subset[, i]
+  # Remove NA values before processing
+  column_data <- na.omit(column_data)
+  # Calculate mode and its percentage
+  mode_info <- calculate_mode(column_data)
+  # Calculate the Index of Qualitative Variation (IVC)
+  ivc_value <- calculate_ivc(column_data)
+  # Calculate rank (handling NA by omitting them)
+  rank_values <- rank(column_data, na.last = "keep", ties.method = "average")
+  # Calculate number of observations (after NA removal)
+  num_observations <- length(column_data)  # Since NAs are omitted, we use length
+  # Store the results for the column in a list
+  results[[i]] <- list(
+    Mode = mode_info$mode_value,
+    Mode_Percentage = mode_info$mode_percentage,
+    IVC = ivc_value,
+    Rank = rank_values,
+    Num_Observations = num_observations
+  )
+}
+# Convert the results into a data frame for better visualization
+result_df <- data.frame(
+  Column = colnames(data_subset),
+  Mode = sapply(results, function(x) x$Mode),
+  Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+  IVC = sapply(results, function(x) x$IVC),
+  Num_Observations = sapply(results, function(x) x$Num_Observations)
+)
+
+num_modes <- length(result_df$Mode)
+num_perc <- length(result_df$Mode_Percentage)
+num_obs<-length(result_df$Num_Observations)
+num_IVC<-length(result_df$IVC)
+num_rows <- length(data_cualitative)
+num_iterations <- pmin(num_modes, num_perc, num_obs, num_IVC, num_rows)
+
+# Assign mode, mode percentage, number of observations, and IVC values to the specified rows
+for (i in seq_len(num_iterations)) {
+  data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]                # Column 8 for Mode
+  data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]     # Column 9 for Mode Percentage
+  data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]   # Column 11 for Number of Observations
+  data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]                # Column 10 for IVC
+}
+
+##Main questions A,B.....
+data_mean[, 111:120] <- lapply(data_mean[, 111:120], function(x) as.numeric(as.character(x)))
+#  Calculate the mean for the first four columns
+mean_values2 <- colMeans(data_mean[, 111:120], na.rm = TRUE)
+# Calculate variance
+variance_values2 <- apply(data_mean[, 111:120], 2, var, na.rm = TRUE)
+# Calculate the number of observations (non-NA values)
+observations2 <- apply(data_mean[, 111:120], 2, function(x) sum(!is.na(x)))
+data_filtrada[111:120, 6] <- mean_values2  # Copy mean values to column 6
+data_filtrada[111:120, 7] <- variance_values2  # Copy variance values to column 7
+data_filtrada[111:120, 11] <- observations2
+
+data_mean[, 123] <- sapply(data_mean[, 123], function(x) as.numeric(as.character(x)))
+
+# Calculate the mean of column 
+mean_values3 <- mean(data_mean[, 123], na.rm = TRUE)
+# Calculate variance
+variance_values3 <- var(data_mean[, 123], na.rm = TRUE)
+#remove columns questions
+
+data_filtrada1 <- data_filtrada%>% select(-c(12:134))
+##inser total mean
+
+data_filtrada1 <- data_filtrada1 %>% add_column(`Mean Total score` = NA, .after = 3)
+data_filtrada1 <- data_filtrada1 %>% add_column(`Variance` = NA, .after = 4)
+
+data_filtrada1[1:1, 4] <- mean_values3  # Copy mean values to column 6
+data_filtrada1[1:1, 5] <- variance_values3  # Copy variance values to column 7
+
+
+
+
