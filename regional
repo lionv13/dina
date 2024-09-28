@@ -1,0 +1,1699 @@
+# Custom function to calculate mode, excluding NAs
+calculate_mode <- function(x) {
+  x <- na.omit(x)  # Remove NAs
+  freq_table <- table(x)
+  sorted_freq <- sort(freq_table, decreasing = TRUE)
+  mode_value <- names(sorted_freq)[1]
+  mode_percentage <- (sorted_freq[1] / sum(sorted_freq)) * 100
+  
+  all_values <- names(sorted_freq)
+  all_percentages <- (sorted_freq / sum(sorted_freq)) * 100
+  
+  return(list(
+    mode_value = mode_value,
+    mode_percentage = mode_percentage,
+    all_values = all_values,
+    all_percentages = all_percentages
+  ))
+}
+
+# Custom function to calculate the Index of Qualitative Variation (IVC), excluding NAs
+calculate_ivc <- function(x) {
+  x <- na.omit(x)  # Remove NAs
+  N <- length(x)
+  freq_table <- table(x)
+  freq_proportions <- freq_table / N
+  ivc <- 1 - sum(freq_proportions^2)
+  return(ivc)
+}
+
+year<-2023
+# Load the data
+expo <- read_xlsx("submissions-export small ruminants dairy_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    # Filter the data for the current country
+    
+  # Get the 116th column name and move it after the first column
+  col_name <- names(data_filtrada)[130]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Add species column
+  data_filtrada <- data_filtrada %>% add_column(species = "Small_ruminants_dairy", .after = 3)
+  
+  # Reorganize total weight columns
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 142)
+  
+  # Add question column
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  # Append the column names as values in the question column
+  col_names_6_to_153 <- names(data_filtrada)[6:140]
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Add columns for statistical calculations
+  data_filtrada <- data_filtrada %>%
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Process quantitative data
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(2:6, 9:12, 18, 94, 108, 109,117,118)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  
+  # Calculate mean, variance, and number of observations
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  # Assign the calculated values to data_filtrada
+  data_filtrada[data_cuantitative, 6] <- mean_values
+  data_filtrada[data_cuantitative, 7] <- variance_values
+  data_filtrada[data_cuantitative, 11] <- num_observations
+  
+  # Process qualitative data
+  data_cualitative <- c(1, 7,8, 13:17, 19:93, 95:107, 110:116,119:124)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  # Convert results to a data frame
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  # Assign the results back to data_filtrada
+  num_iterations <- min(nrow(result_df), length(data_cualitative))
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  
+  # Process main questions
+  data_mean[, 125:135] <- lapply(data_mean[, 125:135], as.numeric)
+  mean_values2 <- colMeans(data_mean[, 125:135], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 125:135], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 125:135], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[125:135, 6] <- mean_values2
+  data_filtrada[125:135, 7] <- variance_values2
+  data_filtrada[125:135, 11] <- observations2
+  
+  # Process total mean and variance for column 123
+  data_mean[, 138] <- sapply(data_mean[, 138], as.numeric)
+  mean_values3 <- mean(data_mean[, 138], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 138], na.rm = TRUE)
+  
+  # Final adjustments for this country
+  data_filtrada1 <- data_filtrada %>%
+    select(-c(3,12:149)) %>%
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(species = ifelse(row_number() <= 146, "Small_ruminants_dairy", species)) %>%
+    add_column(Variance = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 146, country, Country),
+           `Administrative area` = admin_area)
+    
+  # Insert total mean and variance
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  # Store the result for this country
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+
+# Combine all the country results into a single data frame
+resultados_finales12 <- bind_rows( all_area_results)
+
+# Load the data
+expo <- read_xlsx("submissions-export small ruminants meat_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    # Filter the data for the current country
+    
+  # Get the 116th column name and move it after the first column
+  col_name <- names(data_filtrada)[116]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Add species column
+  data_filtrada <- data_filtrada %>% add_column(species = "Small_ruminants_meat", .after = 3)
+  
+  # Reorganize total weight columns
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 127)
+  
+  # Add question column
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  # Append the column names as values in the question column
+  col_names_6_to_153 <- names(data_filtrada)[6:125]
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Add columns for statistical calculations
+  data_filtrada <- data_filtrada %>%
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Process quantitative data
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(2:5, 8:11, 18, 92, 103, 104)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  
+  # Calculate mean, variance, and number of observations
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  # Assign the calculated values to data_filtrada
+  data_filtrada[data_cuantitative, 6] <- mean_values
+  data_filtrada[data_cuantitative, 7] <- variance_values
+  data_filtrada[data_cuantitative, 11] <- num_observations
+  
+  # Process qualitative data
+  data_cualitative <- c(1, 6, 7, 12:17, 19:91, 93:102, 105:110)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  # Convert results to a data frame
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  # Assign the results back to data_filtrada
+  num_iterations <- min(nrow(result_df), length(data_cualitative))
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  
+  # Process main questions
+  data_mean[, 111:120] <- lapply(data_mean[, 111:120], as.numeric)
+  mean_values2 <- colMeans(data_mean[, 111:120], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 111:120], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 111:120], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[111:120, 6] <- mean_values2
+  data_filtrada[111:120, 7] <- variance_values2
+  data_filtrada[111:120, 11] <- observations2
+  
+  # Process total mean and variance for column 123
+  data_mean[, 123] <- sapply(data_mean[, 123], as.numeric)
+  mean_values3 <- mean(data_mean[, 123], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 123], na.rm = TRUE)
+  
+  # Final adjustments for this country
+  data_filtrada1 <- data_filtrada %>%
+    select(-c(3,12:134)) %>%
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(species = ifelse(row_number() <= 120, "Small_ruminants_meat", species)) %>%
+    add_column(Variance = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 120, country, Country),
+           `Administrative area` = admin_area)
+  
+  # Insert total mean and variance
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  # Store the result for this country
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+
+# Combine all the country results into a single data frame
+resultados_finales11 <- bind_rows(all_area_results)
+
+expo <- read_xlsx("submissions-export pigs indoor_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    # Filter the data for the current country
+    
+
+  # Get column name (assuming column 125 exists after filtering)
+  col_name <- names(data_filtrada)[125]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Add column for species
+  data_filtrada <- data_filtrada %>% add_column(species = "Pigs_indoor", .after = 3)
+  
+  # Move total weight columns
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 138)
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  col_names_6_to_153 <- names(data_filtrada)[6:136]
+  num_rows <- nrow(data_filtrada)
+  
+  # Append the column names as values in the 5th column (question column)
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Add additional columns for statistics
+  data_filtrada <- data_filtrada %>% 
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Number of Answers` = NA, .after = 10)
+  
+  # Mean and variance calculations for quantitative columns
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(3:10, 18, 86, 112)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[data_cuantitative, 6] <- mean_values
+  data_filtrada[data_cuantitative, 7] <- variance_values
+  data_filtrada[data_cuantitative, 11] <- num_observations
+  
+  # Mode, rank, and IVC calculations
+  data_cualitative <- c(1, 2, 11:17, 19:85, 87:111, 113:119)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  result_df <- data.frame(
+    Column = colnames(data_mean)[data_cualitative],
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  num_iterations <- pmin(length(result_df$Mode), length(result_df$Mode_Percentage),
+                         length(result_df$IVC), length(result_df$Num_Observations))
+  
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+  }
+  
+  # Main questions A, B calculations (columns 120 to 131)
+  data_mean[, 120:131] <- lapply(data_mean[, 120:131], function(x) as.numeric(as.character(x)))
+  mean_values2 <- colMeans(data_mean[, 120:131], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 120:131], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 120:131], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[120:131, 6] <- mean_values2
+  data_filtrada[120:131, 7] <- variance_values2
+  data_filtrada[120:131, 11] <- observations2
+  
+  # Additional main question calculations for column 134
+  data_mean[, 134] <- sapply(data_mean[, 134], function(x) as.numeric(as.character(x)))
+  mean_values3 <- mean(data_mean[, 134], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 134], na.rm = TRUE)
+  
+  # Remove columns 12 to 145 from data_filtrada1
+  data_filtrada1 <- data_filtrada %>% select(-c(3,12:145))
+  
+  # Insert total mean and other summary columns, ensuring only rows <= 131 are filled
+  data_filtrada1 <- data_filtrada1 %>% 
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    add_column(`Variance` = NA, .after = 2)
+  
+  # Fill species and country only for the first 131 rows
+  data_filtrada1 <- data_filtrada1 %>% 
+    mutate(species = ifelse(row_number() <= 131, "Pigs_indoor", NA)) %>%
+    mutate(Country = ifelse(row_number() <= 131, country, Country),
+           `Administrative area` = admin_area)
+  
+  # Only update the first row with mean and variance
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  # Filter the rows to keep only up to row 131
+  data_filtrada1 <- data_filtrada1 %>% filter(row_number() <= 131)
+  
+  # Store the result for this country
+  # Store the result for this country
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+# Combine results from all countries into one dataframe
+final_results10 <- bind_rows(all_area_results)
+# Leer los datos del archivo Excel
+
+
+expo <- read_xlsx("submissions-export pigs outdoor_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    
+  # Obtener el nombre de la columna y reorganizar
+  col_name <- names(data_filtrada)[140]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Añadir la columna "species" con valor "Pigs_outdoor"
+  data_filtrada <- data_filtrada %>% add_column(species = "Pigs_outdoor", .after = 3)
+  
+  # Reorganizar columnas de total weight
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 153)
+  
+  # Añadir la columna "question"
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  col_names_6_to_153 <- names(data_filtrada)[6:151]
+  
+  # Agregar los nombres de las columnas como valores en la columna 'Question'
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Añadir columnas adicionales para las estadísticas
+  data_filtrada <- data_filtrada %>%
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Procesar los datos cuantitativos
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(6:9, 29)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[data_cuantitative, 6] <- mean_values  # Copiar valores medios a la columna 6
+  data_filtrada[data_cuantitative, 7] <- variance_values  # Copiar valores de varianza a la columna 7
+  data_filtrada[data_cuantitative, 11] <- num_observations  # Copiar observaciones a la columna 11
+  
+  # Procesar los datos cualitativos
+  data_cualitative <- c(1:5, 10:28, 30:134)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  # Convertir los resultados a un data frame
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  num_iterations <- pmin(nrow(result_df), length(data_cualitative))
+  
+  # Asignar los valores calculados a las columnas correctas
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  
+  # Procesar las preguntas principales
+  data_mean[, 135:146] <- lapply(data_mean[, 135:146], function(x) as.numeric(as.character(x)))
+  mean_values2 <- colMeans(data_mean[, 135:146], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 135:146], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 135:146], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[135:146, 6] <- mean_values2
+  data_filtrada[135:146, 7] <- variance_values2
+  data_filtrada[135:146, 11] <- observations2
+  
+  # Procesar la media y la varianza totales
+  data_mean[, 149] <- sapply(data_mean[, 149], function(x) as.numeric(as.character(x)))
+  mean_values3 <- mean(data_mean[, 149], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 149], na.rm = TRUE)
+  
+  # Eliminar preguntas y agregar total
+  data_filtrada1 <- data_filtrada %>% select(-c(3,12:160))
+  data_filtrada1 <- data_filtrada1 %>%
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(species = ifelse(row_number() <= 146, "Pigs_outdoor", species)) %>%
+    add_column(`Variance` = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 146, country, Country),
+           `Administrative area` = admin_area)
+  
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+
+# Combinar todos los resultados en un único data frame final
+resultados_finales9 <- bind_rows(all_area_results)
+
+expo <- read_xlsx("submissions-export dairy cattle_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    
+
+  # Obtener el nombre de la columna y reorganizar
+  col_name <- names(data_filtrada)[143]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Añadir la columna "species" con valor "Dairy_cattle"
+  data_filtrada <- data_filtrada %>% add_column(species = "Dairy_cattle", .after = 3)
+  
+  # Reorganizar columnas de total weight
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 155)
+  
+  # Añadir la columna "question"
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  col_names_6_to_153 <- names(data_filtrada)[6:153]
+  
+  # Append the column names as values below the existing values in column 4
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Añadir las columnas para estadísticas
+  data_filtrada <- data_filtrada %>%
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Procesar los datos cuantitativos
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(1, 3:8, 10:13, 20, 93, 106, 110:114, 116, 127, 128)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[data_cuantitative, 6] <- mean_values  # Copy mean values to column 6
+  data_filtrada[data_cuantitative, 7] <- variance_values  # Copy variance values to column 7
+  data_filtrada[data_cuantitative, 11] <- num_observations 
+  
+  # Procesar los datos cualitativos
+  data_cualitative <- c(2, 9, 14:19, 21:92, 94:105, 107:109, 115, 117:126, 129:137)
+  data_subset <- data_mean[, data_cualitative]
+  
+  # Inicializar una lista para almacenar los resultados de cada columna
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  # Convertir los resultados a data frame
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  # Asignar los resultados calculados al dataframe filtrado
+  num_iterations <- pmin(length(result_df$Mode), length(result_df$Mode_Percentage),
+                         length(result_df$Num_Observations), length(result_df$IVC), length(data_cualitative))
+  
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  
+  # Procesar las preguntas principales (A, B, etc.)
+  data_mean[, 138:148] <- lapply(data_mean[, 138:148], function(x) as.numeric(as.character(x)))
+  mean_values2 <- colMeans(data_mean[, 138:148], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 138:148], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 138:148], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[138:148, 6] <- mean_values2
+  data_filtrada[138:148, 7] <- variance_values2
+  data_filtrada[138:148, 11] <- observations2
+  
+  # Procesar el total final
+  data_mean[, 151] <- sapply(data_mean[, 151], function(x) as.numeric(as.character(x)))
+  mean_values3 <- mean(data_mean[, 151], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 151], na.rm = TRUE)
+  
+  # Eliminar preguntas y añadir la media y varianza total
+  data_filtrada1 <- data_filtrada %>% select(-c(3,12:162))
+  data_filtrada1 <- data_filtrada1 %>% 
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(species = ifelse(row_number() <= 148, "Dairy_cattle", species))
+  data_filtrada1 <- data_filtrada1 %>% 
+    add_column(`Variance` = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 148, country, Country),
+           `Administrative area` = admin_area)
+  
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+# Combinar todos los resultados en un único data frame final
+resultados_finales8 <- bind_rows(all_area_results)
+
+expo <- read_xlsx("submissions-export broilers_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    
+    
+  # Obtener el nombre de la columna y reorganizar
+  col_name <- names(data_filtrada)[89]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Añadir la columna "species" con valor "broilers"
+  data_filtrada <- data_filtrada %>% add_column(Species = "broilers", .after = 3)
+  
+  # Reorganizar columnas de total weight
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 101)
+  # Añadir la columna "question"
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  col_names_6_to_99 <- names(data_filtrada)[6:99]
+  data_filtrada[1:length(col_names_6_to_99), 5] <- col_names_6_to_99
+  
+  # Añadir la columna "question" y otras columnas adicionales
+  data_filtrada <- data_filtrada %>% 
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Procesar los datos cuantitativos
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(1:4)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[data_cuantitative, 6] <- mean_values  # Copy mean values to column 6
+  data_filtrada[data_cuantitative, 7] <- variance_values  # Copy variance values to column 7
+  data_filtrada[data_cuantitative, 11] <- num_observations 
+  
+  # Procesar los datos cualitativos
+  data_cualitative <-c(5:94)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  # Asignar los resultados calculados al dataframe filtrado
+  num_iterations <- pmin(length(result_df$Mode), length(result_df$Mode_Percentage),
+                         length(result_df$Num_Observations), length(result_df$IVC), length(data_cualitative))
+  
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  ##Main questions A,B.....
+  data_mean[, 86:96] <- lapply(data_mean[, 86:96], function(x) as.numeric(as.character(x)))
+  #  Calculate the mean for the first four columns
+  mean_values2 <- colMeans(data_mean[, 86:96], na.rm = TRUE)
+  # Calculate variance
+  variance_values2 <- apply(data_mean[, 86:96], 2, var, na.rm = TRUE)
+  # Calculate the number of observations (non-NA values)
+  observations2 <- apply(data_mean[, 86:96], 2, function(x) sum(!is.na(x)))
+  data_filtrada[84:94, 6] <- mean_values2  # Copy mean values to column 6
+  data_filtrada[84:94, 7] <- variance_values2  # Copy variance values to column 7
+  data_filtrada[84:94, 11] <- observations2
+  
+  ##overall
+  data_mean[, 97] <- sapply(data_mean[, 97], function(x) as.numeric(as.character(x)))
+  
+  # Calculate the mean of column 151, removing any NA values
+  mean_values3 <- mean(data_mean[, 97], na.rm = TRUE)
+  # Calculate variance
+  variance_values3 <- var(data_mean[, 97], na.rm = TRUE)
+  # Eliminar preguntas y añadir la media y varianza total
+  data_filtrada1 <- data_filtrada %>% select(-c(3,12:108))
+  data_filtrada1 <- data_filtrada1 %>% 
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(Species = ifelse(row_number() <= 94, "Broilers", Species))
+  data_filtrada1 <- data_filtrada1 %>% 
+    add_column(`Variance` = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 94, country, Country))
+  
+  data_filtrada1[1:1, 2] <- mean_values3  # Copy mean values to column 6
+  data_filtrada1[1:1, 3] <- variance_values3  # Copy variance values to column 7
+  all_country_results[[country]] <- data_filtrada1
+  }
+}
+resultados_finales7 <- bind_rows(all_country_results)
+# Load the data
+
+expo <- read_xlsx("submissions-export laying hens_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    
+    
+  # Get the 116th column name and move it after the first column
+  col_name <- names(data_filtrada)[135]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Add species column
+  data_filtrada <- data_filtrada %>% add_column(species = "Laying_hens", .after = 3)
+  
+  # Reorganize total weight columns
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 150)
+  
+  # Add question column
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  # Append the column names as values in the question column
+  col_names_6_to_153 <- names(data_filtrada)[6:148]
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Add columns for statistical calculations
+  data_filtrada <- data_filtrada %>%
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Process quantitative data
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(1:4, 7)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  
+  # Calculate mean, variance, and number of observations
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  # Assign the calculated values to data_filtrada
+  data_filtrada[data_cuantitative, 6] <- mean_values
+  data_filtrada[data_cuantitative, 7] <- variance_values
+  data_filtrada[data_cuantitative, 11] <- num_observations
+  
+  # Process qualitative data
+  data_cualitative <- c(5,6,8:129)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  # Convert results to a data frame
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  # Assign the results back to data_filtrada
+  num_iterations <- min(nrow(result_df), length(data_cualitative))
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  
+  # Process main questions
+  data_mean[, 130:143] <- lapply(data_mean[, 130:143], as.numeric)
+  mean_values2 <- colMeans(data_mean[, 130:143], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 130:143], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 130:143], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[130:143, 6] <- mean_values2
+  data_filtrada[130:143, 7] <- variance_values2
+  data_filtrada[130:143, 11] <- observations2
+  
+  # Process total mean and variance for column 123
+  data_mean[, 146] <- sapply(data_mean[, 146], as.numeric)
+  mean_values3 <- mean(data_mean[, 146], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 146], na.rm = TRUE)
+  
+  # Final adjustments for this country
+  data_filtrada1 <- data_filtrada %>%
+    select(-c(3,12:157)) %>%
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(species = ifelse(row_number() <= 143, "Laying_hens", species)) %>%
+    add_column(Variance = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 143, country, Country),
+           `Administrative area` = admin_area)
+  
+  # Insert total mean and variance
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  # Store the result for this country
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+
+# Combine all the country results into a single data frame
+resultados_finales6 <- bind_rows(all_area_results)
+# Load the data
+
+expo <- read_xlsx("submissions-export free range layers_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    
+  # Get the 116th column name and move it after the first column
+  col_name <- names(data_filtrada)[143]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Add species column
+  data_filtrada <- data_filtrada %>% add_column(species = "Free_range_layers", .after = 3)
+  
+  # Reorganize total weight columns
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 157)
+  
+  # Add question column
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  # Append the column names as values in the question column
+  col_names_6_to_153 <- names(data_filtrada)[6:155]
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Add columns for statistical calculations
+  data_filtrada <- data_filtrada %>%
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Process quantitative data
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(1:4, 6,7, 103)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  
+  # Calculate mean, variance, and number of observations
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  # Assign the calculated values to data_filtrada
+  data_filtrada[data_cuantitative, 6] <- mean_values
+  data_filtrada[data_cuantitative, 7] <- variance_values
+  data_filtrada[data_cuantitative, 11] <- num_observations
+  
+  # Process qualitative data
+  data_cualitative <- c(5, 8:102, 104:137)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  # Convert results to a data frame
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  # Assign the results back to data_filtrada
+  num_iterations <- min(nrow(result_df), length(data_cualitative))
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  
+  # Process main questions
+  data_mean[, 138:150] <- lapply(data_mean[, 138:150], as.numeric)
+  mean_values2 <- colMeans(data_mean[, 138:150], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 138:150], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 138:150], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[138:150, 6] <- mean_values2
+  data_filtrada[138:150, 7] <- variance_values2
+  data_filtrada[138:150, 11] <- observations2
+  
+  # Process total mean and variance for column 123
+  data_mean[, 153] <- sapply(data_mean[, 153], as.numeric)
+  mean_values3 <- mean(data_mean[, 153], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 153], na.rm = TRUE)
+  
+  # Final adjustments for this country
+  data_filtrada1 <- data_filtrada %>%
+    select(-c(3,12:164)) %>%
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(species = ifelse(row_number() <= 150, "Free_range_layers", species)) %>%
+    add_column(Variance = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 150, country, Country),
+           `Administrative area` = admin_area)
+  # Insert total mean and variance
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  # Store the result for this country
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+
+# Combine all the country results into a single data frame
+resultados_finales2 <- bind_rows(all_area_results)
+
+expo <- read_xlsx("submissions-export free range broilers_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    
+  # Get the 116th column name and move it after the first column
+  col_name <- names(data_filtrada)[118]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Add species column
+  data_filtrada <- data_filtrada %>% add_column(species = "Free_range_broilers", .after = 3)
+  
+  # Reorganize total weight columns
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 129)
+  
+  # Add question column
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  # Append the column names as values in the question column
+  col_names_6_to_153 <- names(data_filtrada)[6:127]
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Add columns for statistical calculations
+  data_filtrada <- data_filtrada %>%
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Process quantitative data
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(1:5, 7,8, 92)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  
+  # Calculate mean, variance, and number of observations
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  # Assign the calculated values to data_filtrada
+  data_filtrada[data_cuantitative, 6] <- mean_values
+  data_filtrada[data_cuantitative, 7] <- variance_values
+  data_filtrada[data_cuantitative, 11] <- num_observations
+  
+  # Process qualitative data
+  data_cualitative <- c(6, 9:91, 93:112)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  # Convert results to a data frame
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  # Assign the results back to data_filtrada
+  num_iterations <- min(nrow(result_df), length(data_cualitative))
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  
+  # Process main questions
+  data_mean[, 113:122] <- lapply(data_mean[, 113:122], as.numeric)
+  mean_values2 <- colMeans(data_mean[, 113:122], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 113:122], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 113:122], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[113:122, 6] <- mean_values2
+  data_filtrada[113:122, 7] <- variance_values2
+  data_filtrada[113:122, 11] <- observations2
+  
+  # Process total mean and variance for column 123
+  data_mean[, 125] <- sapply(data_mean[, 125], as.numeric)
+  mean_values3 <- mean(data_mean[, 125], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 125], na.rm = TRUE)
+  
+  # Final adjustments for this country
+  data_filtrada1 <- data_filtrada %>%
+    select(-c(3,12:136)) %>%
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(species = ifelse(row_number() <= 122, "Free_range_broilers", species)) %>%
+    add_column(Variance = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 122, country, Country),
+           `Administrative area` = admin_area)
+  # Insert total mean and variance
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  # Store the result for this country
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+
+# Combine all the country results into a single data frame
+resultados_finales5 <- bind_rows(all_area_results)
+
+expo <- read_xlsx("submissions-export breeders_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    
+
+  # Get the 116th column name and move it after the first column
+  col_name <- names(data_filtrada)[137]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Add species column
+  data_filtrada <- data_filtrada %>% add_column(species = "Breeders", .after = 3)
+  
+  # Reorganize total weight columns
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 150)
+  
+  # Add question column
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  # Append the column names as values in the question column
+  col_names_6_to_153 <- names(data_filtrada)[6:148]
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Add columns for statistical calculations
+  data_filtrada <- data_filtrada %>%
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Process quantitative data
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(1:3, 7,8, 97)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  
+  # Calculate mean, variance, and number of observations
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  # Assign the calculated values to data_filtrada
+  data_filtrada[data_cuantitative, 6] <- mean_values
+  data_filtrada[data_cuantitative, 7] <- variance_values
+  data_filtrada[data_cuantitative, 11] <- num_observations
+  
+  # Process qualitative data
+  data_cualitative <- c(4:6, 9:96,98:131)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  # Convert results to a data frame
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  # Assign the results back to data_filtrada
+  num_iterations <- min(nrow(result_df), length(data_cualitative))
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  
+  # Process main questions
+  data_mean[, 132:143] <- lapply(data_mean[, 132:143], as.numeric)
+  mean_values2 <- colMeans(data_mean[, 132:143], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 132:143], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 132:143], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[132:143, 6] <- mean_values2
+  data_filtrada[132:143, 7] <- variance_values2
+  data_filtrada[132:143, 11] <- observations2
+  
+  # Process total mean and variance for column 123
+  data_mean[, 146] <- sapply(data_mean[, 146], as.numeric)
+  mean_values3 <- mean(data_mean[, 146], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 146], na.rm = TRUE)
+  
+  # Final adjustments for this country
+  data_filtrada1 <- data_filtrada %>%
+    select(-c(3,12:157)) %>%
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(species = ifelse(row_number() <= 143, "Breeders", species)) %>%
+    add_column(Variance = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 143, country, Country),
+           `Administrative area` = admin_area)
+  # Insert total mean and variance
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  # Store the result for this country
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+
+# Combine all the country results into a single data frame
+resultados_finales4 <- bind_rows(all_area_results)
+expo <- read_xlsx("submissions-export beef cattle_text_keys.xlsx", col_names = TRUE)
+data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
+data[data == "nan"] <- NA
+data$Completed <- as.character(data$Completed)
+data$Completed <- dmy_hm(data$Completed)
+data <- subset(data, !is.na(data$`Administrative area`) & Fictional != "Yes" & format(Completed, "%Y") == year)
+# Get the list of unique countries
+countries <- unique(data$Country)
+# Initialize an empty list to store results for all countries
+all_country_results <- list()
+all_area_results <- list()
+# Iterate over each country
+for (country in countries) {
+  
+  country_data <- subset(data, Country == country)
+  # Get the list of unique administrative areas within the country
+  admin_areas <- unique(country_data$`Administrative area`)
+  
+  # Iterate over each administrative area within the country
+  for (admin_area in admin_areas) {
+    
+    # Filter the data for the current administrative area
+    data_filtrada <- country_data %>% filter(`Administrative area` == admin_area)
+    
+    # Continue with processing similar to before, but now within each administrative area
+    data_filtrada <- data_filtrada %>%
+      select(-c(1, 2, 8, 9, 10, 11))  # Adjust column indices if necessary
+    
+  # Get the 116th column name and move it after the first column
+  col_name <- names(data_filtrada)[121]
+  data_filtrada <- data_filtrada %>% relocate(!!sym(col_name), .after = 2)
+  
+  # Add species column
+  data_filtrada <- data_filtrada %>% add_column(species = "Beef_cattle", .after = 3)
+  
+  # Reorganize total weight columns
+  col_nametw <- names(data_filtrada)[c(5, 6, 7)]
+  data_filtrada <- data_filtrada %>% relocate(all_of(col_nametw), .after = 132)
+  
+  # Add question column
+  data_filtrada <- data_filtrada %>% add_column(question = NA, .after = 4)
+  
+  # Append the column names as values in the question column
+  col_names_6_to_153 <- names(data_filtrada)[6:130]
+  data_filtrada[1:length(col_names_6_to_153), 5] <- col_names_6_to_153
+  
+  # Add columns for statistical calculations
+  data_filtrada <- data_filtrada %>%
+    add_column(`Mean value` = NA, .after = 5) %>%
+    add_column(`Variance_range` = NA, .after = 6) %>%
+    add_column(`Mode` = NA, .after = 7) %>%
+    add_column(`Percentage` = NA, .after = 8) %>%
+    add_column(`Cualitative Variation Index` = NA, .after = 9) %>%
+    add_column(`Sample size` = NA, .after = 10)
+  
+  # Process quantitative data
+  data_mean <- data_filtrada[, -c(1:11)]
+  data_cuantitative <- c(1, 3:7, 9:12, 19, 90, 103, 106,107)
+  data_mean_subset <- data_mean[, data_cuantitative]
+  data_mean_subset <- lapply(data_mean_subset, function(x) as.numeric(as.character(x)))
+  data_mean_subset <- as.data.frame(data_mean_subset)
+  
+  # Calculate mean, variance, and number of observations
+  mean_values <- colMeans(data_mean_subset, na.rm = TRUE)
+  variance_values <- apply(data_mean_subset, 2, var, na.rm = TRUE)
+  num_observations <- apply(data_mean_subset, 2, function(x) sum(!is.na(x)))
+  
+  # Assign the calculated values to data_filtrada
+  data_filtrada[data_cuantitative, 6] <- mean_values
+  data_filtrada[data_cuantitative, 7] <- variance_values
+  data_filtrada[data_cuantitative, 11] <- num_observations
+  
+  # Process qualitative data
+  data_cualitative <- c(2, 8, 13:18, 20:89, 91:102, 104,105,108:115)
+  data_subset <- data_mean[, data_cualitative]
+  results <- list()
+  
+  # Loop over the columns and calculate mode, mode percentage, IVC, and number of observations
+  for (i in 1:ncol(data_subset)) {
+    column_data <- na.omit(data_subset[, i])
+    mode_info <- calculate_mode(column_data)
+    ivc_value <- calculate_ivc(column_data)
+    num_observations <- length(column_data)
+    
+    # Store the results
+    results[[i]] <- list(
+      Mode = paste(mode_info$all_values, collapse = ", "),
+      Mode_Percentage = paste(round(mode_info$all_percentages, 2), collapse = ", "),
+      IVC = ivc_value,
+      Num_Observations = num_observations
+    )
+  }
+  
+  # Convert results to a data frame
+  result_df <- data.frame(
+    Column = colnames(data_subset),
+    Mode = sapply(results, function(x) x$Mode),
+    Mode_Percentage = sapply(results, function(x) x$Mode_Percentage),
+    IVC = sapply(results, function(x) x$IVC),
+    Num_Observations = sapply(results, function(x) x$Num_Observations)
+  )
+  
+  # Assign the results back to data_filtrada
+  num_iterations <- min(nrow(result_df), length(data_cualitative))
+  for (i in seq_len(num_iterations)) {
+    data_filtrada[data_cualitative[i], 8] <- result_df$Mode[i]
+    data_filtrada[data_cualitative[i], 9] <- result_df$Mode_Percentage[i]
+    data_filtrada[data_cualitative[i], 11] <- result_df$Num_Observations[i]
+    data_filtrada[data_cualitative[i], 10] <- result_df$IVC[i]
+  }
+  
+  # Process main questions
+  data_mean[, 116:125] <- lapply(data_mean[, 116:125], as.numeric)
+  mean_values2 <- colMeans(data_mean[, 116:125], na.rm = TRUE)
+  variance_values2 <- apply(data_mean[, 116:125], 2, var, na.rm = TRUE)
+  observations2 <- apply(data_mean[, 116:125], 2, function(x) sum(!is.na(x)))
+  
+  data_filtrada[116:125, 6] <- mean_values2
+  data_filtrada[116:125, 7] <- variance_values2
+  data_filtrada[116:125, 11] <- observations2
+  
+  # Process total mean and variance for column 123
+  data_mean[, 128] <- sapply(data_mean[, 128], as.numeric)
+  mean_values3 <- mean(data_mean[, 128], na.rm = TRUE)
+  variance_values3 <- var(data_mean[, 128], na.rm = TRUE)
+  
+  # Final adjustments for this country
+  data_filtrada1 <- data_filtrada %>%
+    select(-c(3,12:139)) %>%
+    add_column(`Mean Total score` = NA, .after = 1) %>%
+    mutate(species = ifelse(row_number() <= 125, "Beef_cattle", species)) %>%
+    add_column(Variance = NA, .after = 2) %>%
+    mutate(Country = ifelse(row_number() <= 125, country, Country),
+           `Administrative area` = admin_area)
+  # Insert total mean and variance
+  data_filtrada1[1:1, 2] <- mean_values3
+  data_filtrada1[1:1, 3] <- variance_values3
+  
+  # Store the result for this country
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
+  }
+}
+
+# Combine all the country results into a single data frame
+resultados_finales3 <- bind_rows(all_area_results)
+
+wb <- createWorkbook()
+
+
+sheet_name1 <- "Beef_cattle"
+addWorksheet(wb, sheet_name1)
+writeData(wb, sheet = sheet_name1, resultados_finales3)
+
+sheet_name2 <- "Dairy_cattle"
+addWorksheet(wb, sheet_name2)
+writeData(wb, sheet = sheet_name2, resultados_finales8)  
+sheet_name3 <- "Pigs_indoor"
+addWorksheet(wb, sheet_name3)
+writeData(wb, sheet = sheet_name3, final_results10)  
+sheet_name4 <- "Pigs_outdoor"
+addWorksheet(wb, sheet_name4)
+writeData(wb, sheet = sheet_name4, resultados_finales9) 
+sheet_name5 <- "free_range-layers"
+addWorksheet(wb, sheet_name5)
+writeData(wb, sheet = sheet_name5, resultados_finales2)  
+
+sheet_name6 <- "Broilers"
+addWorksheet(wb, sheet_name6)
+writeData(wb, sheet = sheet_name6, resultados_finales7) 
+sheet_name7 <- "Laying_hens"
+addWorksheet(wb, sheet_name7)
+writeData(wb, sheet = sheet_name7, resultados_finales6)  
+sheet_name8 <- "Free_range_broilers"
+addWorksheet(wb, sheet_name8)
+writeData(wb, sheet = sheet_name8, resultados_finales5)  
+sheet_name9 <- "Breeders"
+addWorksheet(wb, sheet_name9)
+writeData(wb, sheet = sheet_name9, resultados_finales4)  
+sheet_name10 <- "Small_ruminants_meat"
+addWorksheet(wb, sheet_name10)
+writeData(wb, sheet = sheet_name10, resultados_finales11) 
+sheet_name11 <- "Small_ruminants_dairy"
+addWorksheet(wb, sheet_name11)
+writeData(wb, sheet = sheet_name11, resultados_finales12) 
+# Save the workbook to a file
+file_name <- "2023_reg_Biocheck.xlsx"
+saveWorkbook(wb, file = file_name, overwrite = TRUE)
+
+
+
+
+
+
+
