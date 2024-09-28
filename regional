@@ -27,7 +27,7 @@ calculate_ivc <- function(x) {
   return(ivc)
 }
 
-year<-2023
+year<-2024
 # Load the data
 expo <- read_xlsx("submissions-export small ruminants dairy_text_keys.xlsx", col_names = TRUE)
 data <- data.frame(expo, stringsAsFactors = FALSE, check.names = FALSE)
@@ -911,10 +911,10 @@ for (country in countries) {
   
   data_filtrada1[1:1, 2] <- mean_values3  # Copy mean values to column 6
   data_filtrada1[1:1, 3] <- variance_values3  # Copy variance values to column 7
-  all_country_results[[country]] <- data_filtrada1
+  all_area_results[[paste(country, admin_area, sep = "_")]] <- data_filtrada1
   }
 }
-resultados_finales7 <- bind_rows(all_country_results)
+resultados_finales7 <- bind_rows(all_area_results)
 # Load the data
 
 expo <- read_xlsx("submissions-export laying hens_text_keys.xlsx", col_names = TRUE)
@@ -1688,7 +1688,7 @@ sheet_name11 <- "Small_ruminants_dairy"
 addWorksheet(wb, sheet_name11)
 writeData(wb, sheet = sheet_name11, resultados_finales12) 
 # Save the workbook to a file
-file_name <- "2023_reg_Biocheck.xlsx"
+file_name <- "2024_reg_Biocheck.xlsx"
 saveWorkbook(wb, file = file_name, overwrite = TRUE)
 
 
